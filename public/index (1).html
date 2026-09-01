@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Денежная книга</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Golos+Text:wght@400;500;600&family=Chivo+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0E0C0A; --ink:#EFE6CF; --muted:#9A8F7A; --line:#3A322A;
+    --red:#D8453A; --green:#B9A05C; --blue:#C9B037; --paper:#1A1613;
+    --chrome1:#F2F2F2; --chrome2:#8C8C8C; --chrome3:#4A4A4A;
+  }
+  :root{color-scheme:dark}
+  *{box-sizing:border-box; margin:0}
+  body{
+    background:
+      radial-gradient(ellipse 120% 60% at 50% -10%, #241E17 0%, transparent 60%),
+      repeating-linear-gradient(115deg, #0E0C0A 0 3px, #120F0C 3px 6px),
+      var(--bg);
+    color:var(--ink);
+    font-family:"Golos Text",system-ui,sans-serif; font-size:16px; line-height:1.5;
+    padding:20px 16px 64px;
+  }
+  .wrap{max-width:680px; margin:0 auto}
+  header{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:6px; padding-bottom:14px;
+    border-bottom:3px solid; border-image:linear-gradient(90deg,var(--chrome3),var(--chrome1),var(--chrome2),var(--chrome1),var(--chrome3)) 1}
+  header h1 small{display:block; font-size:.62rem; letter-spacing:.3em; color:var(--muted); font-weight:400}
+  h1{font-family:"Oswald",sans-serif; font-weight:600; font-size:1.3rem; letter-spacing:.14em; text-transform:uppercase}
+  select{
+    font-family:"Oswald",sans-serif; font-size:.85rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--ink); background:linear-gradient(180deg,#262019,#17130F);
+    border:1px solid var(--chrome3); border-radius:6px; padding:6px 10px;
+  }
+  select:focus-visible{outline:2px solid var(--blue); outline-offset:1px}
+
+  /* Фильтр по людям */
+  .chips{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px}
+  .chip{
+    font-family:"Oswald",sans-serif; font-size:.82rem; letter-spacing:.12em; text-transform:uppercase; cursor:pointer;
+    border:1px solid var(--chrome3); background:linear-gradient(180deg,#262019,#17130F); color:var(--muted);
+    border-radius:6px; padding:6px 14px; box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .chip.on{color:#111; background:linear-gradient(180deg,var(--chrome1),var(--chrome2)); border-color:var(--chrome1)}
+  .chip:focus-visible{outline:2px solid var(--blue); outline-offset:2px}
+
+  .ledger{padding:22px 0 8px}
+  .balance-label{color:var(--muted); font-size:.95rem}
+  .balance{font-family:"Chivo Mono",monospace; font-weight:700; font-size:clamp(2rem,9vw,3rem); letter-spacing:-.02em; margin:2px 0 16px; font-variant-numeric:tabular-nums}
+  .balance.neg{color:var(--red)}
+  .splitbar{display:flex; height:10px; border-radius:5px; overflow:hidden; background:var(--line)}
+  .splitbar .in{background:var(--green)} .splitbar .out{background:var(--red)}
+  .splitlegend{display:flex; justify-content:space-between; margin-top:10px; font-size:.95rem}
+  .splitlegend b{font-variant-numeric:tabular-nums; font-weight:600}
+  .in-t{color:var(--green)} .out-t{color:var(--red)}
+
+  section{margin-top:36px}
+  h2{font-family:"Oswald",sans-serif; font-weight:500; font-size:.9rem; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:14px}
+  .chartbox{
+    background:linear-gradient(180deg,#1E1A16,#151210);
+    border:1px solid var(--line); border-radius:14px; padding:16px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 0 0 3px #0A0908,
+      0 0 0 5px var(--chrome3), 0 0 0 6px var(--chrome1), 0 0 0 8px var(--chrome3), 0 4px 14px rgba(0,0,0,.6);
+  }
+  .gaugewrap{display:flex; flex-direction:column; align-items:center; padding:18px 10px 6px}
+  .gaugewrap svg{width:min(100%,420px); height:auto; overflow:visible}
+  .gauge-balance{font-family:"Chivo Mono",monospace; font-weight:600; font-size:clamp(1.6rem,7vw,2.3rem); margin-top:-8px; font-variant-numeric:tabular-nums}
+  .gauge-balance.neg{color:var(--red)}
+  .gauge-sub{color:var(--muted); font-size:.85rem; letter-spacing:.1em; text-transform:uppercase; font-family:"Oswald",sans-serif}
+  .chartbox svg{display:block; width:100%; height:auto; overflow:visible}
+  .legend{display:flex; gap:16px; justify-content:center; margin-top:10px; font-size:.85rem; color:var(--muted)}
+  .legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px}
+
+  /* Полосы (категории и люди) */
+  .bars .row{display:grid; grid-template-columns:1fr auto; gap:4px 12px; padding:9px 0; border-bottom:1px dotted var(--line)}
+  .bars .row:last-child{border-bottom:none}
+  .bars .name{font-weight:500}
+  .bars .sum{font-variant-numeric:tabular-nums; font-weight:600}
+  .bars .sub{color:var(--muted); font-size:.85rem; font-weight:400}
+  .bars .bar{grid-column:1 / -1; height:8px; border-radius:4px; overflow:hidden;
+    background:repeating-linear-gradient(90deg,#26211B 0 10%, #1C1814 10% 12.5%); border:1px solid #000;
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.8)}
+  .bars .bar i{display:block; height:100%; background:linear-gradient(180deg,#E8584C,var(--red)); border-radius:3px}
+  .bars .row{position:relative}
+  .bars .row::before{content:"E"; position:absolute; left:0; bottom:-2px; font-size:.6rem; color:var(--muted); font-family:"Oswald",sans-serif}
+  .bars .row::after{content:"F"; position:absolute; right:0; bottom:-2px; font-size:.6rem; color:var(--muted); font-family:"Oswald",sans-serif}
+  .bars .row{padding-bottom:16px}
+
+  .journal{background:linear-gradient(180deg,#1E1A16,#151210); border:1px solid var(--line); border-radius:14px; overflow:hidden;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 3px #0A0908, 0 0 0 5px var(--chrome3), 0 0 0 6px var(--chrome1), 0 0 0 8px var(--chrome3)}
+  .journal .day{padding:8px 16px; background:#120F0C; color:var(--muted); font-size:.8rem; font-family:"Oswald",sans-serif; letter-spacing:.15em; text-transform:uppercase; border-top:1px solid var(--line)}
+  .journal .day:first-child{border-top:none}
+  .tx{display:flex; justify-content:space-between; gap:12px; padding:11px 16px; border-top:1px solid var(--line)}
+  .tx .what .cat{font-weight:500}
+  .tx .what .desc{color:var(--muted); font-size:.9rem}
+  .tx .who{display:inline-block; font-size:.75rem; color:var(--muted); background:var(--bg); border-radius:6px; padding:1px 7px; margin-left:6px; vertical-align:1px}
+  .tx .amt{font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap}
+  .tx .amt.income{color:var(--green)}
+  .tx .amt.expense{color:var(--ink)}
+
+  .tx{cursor:pointer}
+  .edit{display:none; padding:12px 16px 16px; background:var(--bg); border-top:1px dashed var(--line)}
+  .edit.open{display:block}
+  .edit .grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px}
+  .edit label{font-size:.78rem; color:var(--muted); display:block; margin-bottom:3px}
+  .edit input, .edit select{
+    width:100%; font:inherit; font-size:.95rem; color:var(--ink); background:var(--paper);
+    border:1px solid var(--line); border-radius:8px; padding:7px 10px;
+  }
+  .edit input:focus-visible, .edit select:focus-visible{outline:2px solid var(--blue); outline-offset:1px}
+  .edit .acts{display:flex; gap:10px}
+  .btn{font:inherit; font-size:.9rem; font-weight:500; cursor:pointer; border-radius:8px; padding:8px 16px; border:1px solid var(--line)}
+  .btn.save{background:linear-gradient(180deg,var(--chrome1),var(--chrome2)); border-color:var(--chrome1); color:#111; font-family:"Oswald",sans-serif; letter-spacing:.08em; text-transform:uppercase}
+  .btn.del{background:none; color:var(--red); border-color:var(--red); margin-left:auto; font-family:"Oswald",sans-serif; letter-spacing:.08em; text-transform:uppercase}
+  .btn:disabled{opacity:.5; cursor:default}
+  .empty{color:var(--muted); text-align:center; padding:48px 16px}
+  .err{color:var(--red); text-align:center; padding:40px 16px}
+  footer{margin-top:48px; color:var(--muted); font-size:.85rem; text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Денежная книга<small>since '67 · family garage</small></h1>
+    <select id="month" aria-label="Месяц"></select>
+  </header>
+
+  <div class="chips" id="chips"></div>
+
+  <div id="app" hidden>
+    <div class="ledger">
+      <div class="chartbox gaugewrap">
+        <div id="gauge"></div>
+        <div class="gauge-balance" id="balance">…</div>
+        <div class="gauge-sub" id="balanceLabel">Баланс</div>
+        <div class="splitlegend" style="width:100%; max-width:420px; margin-top:14px">
+          <span class="in-t">доход <b id="incomeSum"></b></span>
+          <span class="out-t">расход <b id="expenseSum"></b></span>
+        </div>
+      </div>
+    </div>
+
+    <section id="peopleSec">
+      <h2>Кто тратил</h2>
+      <div class="chartbox bars" id="people"></div>
+    </section>
+
+    <section>
+      <h2>Расходы по категориям</h2>
+      <div class="chartbox bars" id="cats"></div>
+    </section>
+
+    <section>
+      <h2>По дням</h2>
+      <div class="chartbox" id="daily"></div>
+    </section>
+
+    <section>
+      <h2>Последние полгода</h2>
+      <div class="chartbox" id="monthly"></div>
+    </section>
+
+    <section>
+      <h2>Журнал</h2>
+      <div class="journal" id="journal"></div>
+    </section>
+  </div>
+
+  <div id="empty" class="empty" hidden>
+    Записей пока нет. Напишите боту первую трату — например, «кофе 300».
+  </div>
+  <div id="error" class="err" hidden></div>
+
+  <footer>Ford Mustang '67 edition · обновляется из Telegram-бота</footer>
+</div>
+
+<script>
+(function(){
+  var KEY = new URLSearchParams(location.search).get("key") || "";
+  var state = { month: "", person: "" };
+  var MONTHS = ["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+  function fmt(n){ return Math.round(n).toLocaleString("ru-RU") + " ₽"; }
+  function short(n){ return n >= 1000 ? Math.round(n/1000) + "к" : String(Math.round(n)); }
+  function monthName(m){ var p = m.split("-"); return MONTHS[+p[1]-1] + " " + p[0]; }
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+  function $(id){ return document.getElementById(id); }
+
+  function showError(msg){ $("app").hidden = true; $("empty").hidden = true; $("error").hidden = false; $("error").textContent = msg; }
+
+  function load(){
+    var q = new URLSearchParams({ key: KEY });
+    if (state.month) q.set("month", state.month);
+    if (state.person) q.set("person", state.person);
+    fetch("/api/summary?" + q).then(function(r){
+      if (!r.ok) throw new Error(r.status === 401 || r.status === 403
+        ? "Нет доступа — возьмите свежую ссылку у бота (/dashboard)."
+        : "Сервер ответил ошибкой " + r.status);
+      return r.json();
+    }).then(render).catch(function(e){ showError(e.message || "Не удалось загрузить данные"); });
+  }
+
+  /* Тахометр: доля потраченного от дохода, 0–120%, красная зона от 90 */
+  function gauge(el, expense, income){
+    var pct = income > 0 ? expense / income : (expense > 0 ? 1.2 : 0);
+    pct = Math.max(0, Math.min(1.2, pct));
+    var a0 = -210, a1 = 30; // degrees, sweep 240
+    function pt(deg, r){ var rad = deg * Math.PI / 180; return [200 + r * Math.cos(rad), 170 + r * Math.sin(rad)]; }
+    var o = '<svg viewBox="0 0 400 260" xmlns="http://www.w3.org/2000/svg">';
+    // face
+    o += '<circle cx="200" cy="170" r="150" fill="#14100D" stroke="#000" stroke-width="2"/>';
+    o += '<circle cx="200" cy="170" r="150" fill="none" stroke="url(#chr)" stroke-width="7"/>';
+    o += '<defs><linearGradient id="chr" x1="0" y1="0" x2="0" y2="1">' +
+         '<stop offset="0" stop-color="#F2F2F2"/><stop offset=".5" stop-color="#7A7A7A"/><stop offset="1" stop-color="#DADADA"/></linearGradient></defs>';
+    // ticks 0..120 каждые 10
+    for (var v = 0; v <= 120; v += 10){
+      var deg = a0 + (a1 - a0) * v / 120;
+      var major = v % 20 === 0;
+      var p1 = pt(deg, 138), p2 = pt(deg, major ? 118 : 127);
+      var col = v >= 90 ? "#D8453A" : "#EFE6CF";
+      o += '<line x1="' + p1[0] + '" y1="' + p1[1] + '" x2="' + p2[0] + '" y2="' + p2[1] + '" stroke="' + col + '" stroke-width="' + (major ? 4 : 2) + '"/>';
+      if (major){ var pt3 = pt(deg, 100);
+        o += '<text x="' + pt3[0] + '" y="' + (pt3[1] + 5) + '" text-anchor="middle" fill="' + col + '" font-family="Oswald, sans-serif" font-size="17">' + v + '</text>'; }
+    }
+    // redline arc
+    var r1 = pt(a0 + (a1 - a0) * 90 / 120, 145), r2 = pt(a1, 145);
+    o += '<path d="M ' + r1[0] + ' ' + r1[1] + ' A 145 145 0 0 1 ' + r2[0] + ' ' + r2[1] + '" fill="none" stroke="#D8453A" stroke-width="6" opacity=".85"/>';
+    o += '<text x="200" y="130" text-anchor="middle" fill="#9A8F7A" font-family="Oswald, sans-serif" font-size="13" letter-spacing="3">% ДОХОДА</text>';
+    o += '<text x="200" y="150" text-anchor="middle" fill="#9A8F7A" font-family="Oswald, sans-serif" font-size="11" letter-spacing="2">ПОТРАЧЕНО</text>';
+    // needle
+    var nd = a0 + (a1 - a0) * pct / 1.2;
+    var tip = pt(nd, 125), tail = pt(nd + 180, 26);
+    o += '<line x1="' + tail[0] + '" y1="' + tail[1] + '" x2="' + tip[0] + '" y2="' + tip[1] + '" stroke="#D8453A" stroke-width="5" stroke-linecap="round"/>';
+    o += '<circle cx="200" cy="170" r="14" fill="url(#chr)" stroke="#333" stroke-width="2"/>';
+    // % label
+    o += '<text x="200" y="228" text-anchor="middle" fill="#EFE6CF" font-family="Chivo Mono, monospace" font-size="22" font-weight="600">' + Math.round(pct * 100) + '%</text>';
+    o += '</svg>';
+    el.innerHTML = o;
+  }
+
+  /* Столбчатая диаграмма на SVG: series = [{color, values}], labels = [] */
+  function barChart(el, labels, series, stacked){
+    var W = 640, H = 200, padL = 36, padB = 24, padT = 8;
+    var n = labels.length;
+    if (!n){ el.innerHTML = "<div class='empty' style='padding:24px'>Пока пусто</div>"; return; }
+    var max = 0;
+    for (var i = 0; i < n; i++){
+      var s = 0, m = 0;
+      series.forEach(function(sr){ s += sr.values[i] || 0; m = Math.max(m, sr.values[i] || 0); });
+      max = Math.max(max, stacked ? s : m);
+    }
+    max = max || 1;
+    var plotW = W - padL, plotH = H - padB - padT;
+    var slot = plotW / n, gap = Math.min(6, slot * 0.25);
+    var bw = stacked ? slot - gap : (slot - gap) / series.length;
+    var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" font-family="Golos Text, sans-serif" font-size="11">';
+    for (var g = 0; g <= 3; g++){
+      var y = padT + plotH - plotH * g / 3;
+      out += '<line x1="' + padL + '" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="#3A322A" stroke-width="1"/>';
+      out += '<text x="' + (padL - 6) + '" y="' + (y + 4) + '" text-anchor="end" fill="#9A8F7A">' + short(max * g / 3) + '</text>';
+    }
+    for (var k = 0; k < n; k++){
+      var x0 = padL + k * slot + gap / 2, acc = 0;
+      series.forEach(function(sr, si){
+        var v = sr.values[k] || 0; if (!v) return;
+        var h = v / max * plotH;
+        var x = stacked ? x0 : x0 + si * bw;
+        var y = stacked ? padT + plotH - acc - h : padT + plotH - h;
+        acc += h;
+        out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="' + sr.color + '"><title>' + esc(sr.name) + ': ' + fmt(v) + '</title></rect>';
+      });
+      var showLbl = n <= 12 || k % Math.ceil(n / 12) === 0;
+      if (showLbl) out += '<text x="' + (x0 + (slot - gap) / 2) + '" y="' + (H - 6) + '" text-anchor="middle" fill="#9A8F7A">' + esc(labels[k]) + '</text>';
+    }
+    out += '</svg>';
+    out += '<div class="legend">' + series.map(function(sr){ return '<span><i style="background:' + sr.color + '"></i>' + esc(sr.name) + '</span>'; }).join("") + '</div>';
+    el.innerHTML = out;
+  }
+
+  function render(d){
+    var has = d.recent.length > 0 || d.months.length > 0;
+    $("error").hidden = true;
+    $("app").hidden = !has;
+    $("empty").hidden = has;
+    state.month = d.month;
+
+    var sel = $("month");
+    var list = d.months.indexOf(d.month) >= 0 ? d.months : [d.month].concat(d.months);
+    sel.innerHTML = list.map(function(m){ return '<option value="' + m + '"' + (m === d.month ? ' selected' : '') + '>' + monthName(m) + '</option>'; }).join("");
+    sel.onchange = function(){ state.month = sel.value; load(); };
+
+    var people = d.people || [];
+    var chips = $("chips");
+    if (people.length > 1){
+      var all = [""].concat(people);
+      chips.innerHTML = all.map(function(p){
+        return '<button class="chip' + (p === state.person ? ' on' : '') + '" data-p="' + esc(p) + '">' + (p ? esc(p) : 'Все') + '</button>';
+      }).join("");
+      Array.prototype.forEach.call(chips.querySelectorAll(".chip"), function(b){
+        b.onclick = function(){ state.person = b.getAttribute("data-p"); load(); };
+      });
+    } else chips.innerHTML = "";
+
+    var bal = d.totals.income - d.totals.expense;
+    var balEl = $("balance");
+    balEl.textContent = (bal > 0 ? "+" : "") + fmt(bal);
+    balEl.classList.toggle("neg", bal < 0);
+    $("balanceLabel").textContent = "Баланс · " + monthName(d.month) + (state.person ? " · " + state.person : "");
+    $("incomeSum").textContent = fmt(d.totals.income);
+    $("expenseSum").textContent = fmt(d.totals.expense);
+    gauge($("gauge"), d.totals.expense, d.totals.income);
+
+    var bp = (d.byPerson || []).filter(function(p){ return p.expense > 0 || p.income > 0; });
+    $("peopleSec").hidden = !(bp.length > 1 && !state.person);
+    if (bp.length){
+      var pmax = Math.max.apply(null, bp.map(function(p){ return p.expense; })) || 1;
+      var pTotal = bp.reduce(function(s, p){ return s + p.expense; }, 0) || 1;
+      $("people").innerHTML = bp.map(function(p){
+        return '<div class="row"><span class="name">' + esc(p.person) + ' <span class="sub">' + Math.round(p.expense / pTotal * 100) + '%</span></span>' +
+          '<span class="sum">' + fmt(p.expense) + '</span>' +
+          '<span class="bar"><i style="width:' + Math.max(3, p.expense / pmax * 100) + '%"></i></span></div>';
+      }).join("");
+    }
+
+    var cats = $("cats");
+    if (!d.byCategory.length) cats.innerHTML = "<div class='empty'>Расходов в этом месяце нет</div>";
+    else {
+      var cmax = d.byCategory[0].total;
+      cats.innerHTML = d.byCategory.map(function(c){
+        return '<div class="row"><span class="name">' + esc(c.category) + '</span><span class="sum">' + fmt(c.total) + '</span>' +
+          '<span class="bar"><i style="width:' + Math.max(3, c.total / cmax * 100) + '%"></i></span></div>';
+      }).join("");
+    }
+
+    barChart($("daily"), d.byDay.map(function(x){ return +x.day.slice(8, 10); }), [
+      { name: "Расход", color: "#D8453A", values: d.byDay.map(function(x){ return x.expense; }) },
+      { name: "Доход",  color: "#B9A05C", values: d.byDay.map(function(x){ return x.income; }) }
+    ], true);
+
+    barChart($("monthly"), d.byMonth.map(function(x){ return monthName(x.month).split(" ")[0]; }), [
+      { name: "Доход",  color: "#B9A05C", values: d.byMonth.map(function(x){ return x.income; }) },
+      { name: "Расход", color: "#D8453A", values: d.byMonth.map(function(x){ return x.expense; }) }
+    ], false);
+
+    var html = "", lastDay = "";
+    d.recent.forEach(function(t){
+      if (t.day !== lastDay){
+        lastDay = t.day;
+        var p = t.day.split("-");
+        html += '<div class="day">' + (+p[2]) + ' ' + monthName(p[0] + "-" + p[1]).split(" ")[0] + '</div>';
+      }
+      html += '<div class="tx" data-id="' + t.id + '"><div class="what"><div class="cat">' + esc(t.category) +
+        (t.person && people.length > 1 ? '<span class="who">' + esc(t.person) + '</span>' : '') + '</div>' +
+        (t.description ? '<div class="desc">' + esc(t.description) + '</div>' : '') + '</div>' +
+        '<div class="amt ' + t.type + '">' + (t.type === "income" ? "+" : "−") + fmt(t.amount) + '</div></div>' +
+        '<div class="edit" data-for="' + t.id + '">' +
+          '<div class="grid">' +
+            '<div><label>Сумма</label><input type="number" step="0.01" min="0" name="amount" value="' + t.amount + '"></div>' +
+            '<div><label>Тип</label><select name="type"><option value="expense"' + (t.type==="expense"?" selected":"") + '>расход</option><option value="income"' + (t.type==="income"?" selected":"") + '>доход</option></select></div>' +
+            '<div><label>Категория</label><input name="category" value="' + esc(t.category) + '"></div>' +
+            '<div><label>Кто</label><input name="person" value="' + esc(t.person === "—" ? "" : t.person) + '"></div>' +
+            '<div><label>Описание</label><input name="description" value="' + esc(t.description || "") + '"></div>' +
+            '<div><label>Дата</label><input type="date" name="day" value="' + t.day + '"></div>' +
+          '</div>' +
+          '<div class="acts"><button class="btn save">Сохранить</button><button class="btn del">Удалить</button></div>' +
+        '</div>';
+    });
+    var j = $("journal");
+    j.innerHTML = html || "<div class='empty'>Пусто</div>";
+
+    Array.prototype.forEach.call(j.querySelectorAll(".tx"), function(row){
+      row.onclick = function(){
+        var f = j.querySelector('.edit[data-for="' + row.getAttribute("data-id") + '"]');
+        var was = f.classList.contains("open");
+        Array.prototype.forEach.call(j.querySelectorAll(".edit.open"), function(o){ o.classList.remove("open"); });
+        if (!was) f.classList.add("open");
+      };
+    });
+    Array.prototype.forEach.call(j.querySelectorAll(".edit"), function(f){
+      var id = f.getAttribute("data-for");
+      function val(n){ return f.querySelector('[name="' + n + '"]').value; }
+      f.querySelector(".save").onclick = function(){
+        this.disabled = true;
+        fetch("/api/tx/" + id + "?key=" + encodeURIComponent(KEY), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: +val("amount"), type: val("type"), category: val("category").trim(),
+            person: val("person").trim(), description: val("description").trim(), day: val("day")
+          })
+        }).then(function(r){ if (!r.ok) throw 0; load(); })
+          .catch(function(){ alert("Не удалось сохранить"); }).finally(function(){ });
+      };
+      f.querySelector(".del").onclick = function(){
+        if (!confirm("Удалить запись?")) return;
+        this.disabled = true;
+        fetch("/api/tx/" + id + "?key=" + encodeURIComponent(KEY), { method: "DELETE" })
+          .then(function(r){ if (!r.ok) throw 0; load(); })
+          .catch(function(){ alert("Не удалось удалить"); });
+      };
+    });
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

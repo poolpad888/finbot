@@ -62,7 +62,51 @@ async function initDb() {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS person TEXT;
     CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions (occurred_on);
     CREATE INDEX IF NOT EXISTS idx_tx_person ON transactions (person);
+    CREATE TABLE IF NOT EXISTS people (
+      name TEXT PRIMARY KEY,
+      aliases TEXT[] NOT NULL DEFAULT '{}'
+    );
   `);
+  const { rows } = await pool.query(`SELECT COUNT(*) AS n FROM people`);
+  if (Number(rows[0].n) === 0) {
+    await pool.query(
+      `INSERT INTO people (name, aliases) VALUES ($1, $2), ('Маша', $3) ON CONFLICT DO NOTHING`,
+      [DEFAULT_PERSON, ["я", "мне", "меня", "себе", "мой", "моя", "мои"], ["мария", "маши", "маше", "машу", "машей", "машины", "машино", "машина"]]
+    );
+  }
+}
+
+async function loadPeople() {
+  const { rows } = await pool.query(`SELECT name, aliases FROM people ORDER BY name`);
+  return rows;
+}
+
+// Приводит имя из текста к каноническому из списка людей.
+// Совпадение — по имени, синониму или общему началу слова (падежи).
+function matchPerson(raw, people) {
+  if (!raw || typeof raw !== "string") return null;
+  const w = raw.trim().toLowerCase();
+  if (!w) return null;
+  for (const p of people) {
+    const cands = [p.name.toLowerCase(), ...(p.aliases || []).map((a) => a.toLowerCase())];
+    for (const c of cands) {
+      if (c === w) return p.name;
+      const base = Math.min(c.length, w.length);
+      if (base >= 3 && c.slice(0, base - 1) === w.slice(0, base - 1)) return p.name;
+    }
+  }
+  return null;
+}
+
+// Грубый стемминг для поиска по темам: "кальяны"/"кальянная"/"кальянную" -> "кальян"
+function stemRu(word) {
+  let w = (word || "").toLowerCase().trim().split(/\s+/)[0] || "";
+  const endings = ["иями","ями","ами","иях","иям","ыми","ими","его","ому","ему","ой","ей","ая","яя","ое","ее","ые","ие","ый","ий","ах","ях","ам","ям","ов","ев","ом","ем","ую","юю","а","я","о","е","ы","и","у","ю","ь"];
+  for (const e of endings) {
+    if (w.length - e.length >= 4 && w.endsWith(e)) { w = w.slice(0, -e.length); break; }
+  }
+  if (w.length > 6) w = w.slice(0, 6);
+  return w;
 }
 
 // ---------- Telegram ----------
@@ -94,7 +138,8 @@ const PARSER_SYSTEM = `Ты — парсер финансовых записей
 - Категории расходов строго из списка: ${EXPENSE_CATS.join(", ")}.
 - Категории доходов строго из списка: ${INCOME_CATS.join(", ")}.
 - Если в сообщении несколько операций — верни несколько элементов.
-- "person": имя человека, чья это операция, если оно названо ("Маша купила продукты 2000" -> "Маша"). Имя приводи к именительному падежу с заглавной буквы: "Маше", "Машины", "у Маши" -> "Маша". Если человек не назван или речь о себе ("я", "мне", "купил") — верни null.
+- Известные люди (используй ТОЛЬКО эти имена, точно как написано): {PEOPLE}. Любую форму, падеж или синоним приводи к имени из списка. Если названо имя не из списка — верни null, НИКОГДА не придумывай новых людей.
+- "person": имя из списка, если названо, чья это операция ("Маша купила продукты 2000" -> "Маша"). Если человек не назван или речь о себе ("я", "мне", "купил") — верни null.
 - Если в одном сообщении несколько операций и человек назван один раз, он относится ко всем, пока не назван другой.
 - "date" укажи только если названа явная дата ("вчера", "25 августа"), иначе null. Сегодня: {TODAY}.
 - Суммы вроде "1.5к"/"1,5 тыс" = 1500. Валюта — рубли, знак валюты игнорируй.
@@ -108,7 +153,12 @@ const PARSER_SYSTEM = `Ты — парсер финансовых записей
 - "person": null, если спрашивают про всех ("мы", "всего") или человек не назван и по смыслу вопрос общий; "Я" — если явно про себя.
 - "q": null, если вопрос про все траты без темы.
 - "from"/"to": границы периода; null-null = текущий месяц. "вчера" -> обе даты вчерашние. Сегодня: {TODAY}.
-- "kind": "income", если спрашивают про доходы, иначе "expense".`;
+- "kind": "income", если спрашивают про доходы, иначе "expense".
+- "q" приводи к начальной форме единственного числа: "на кальяны", "в кальянную", "кальянов" -> "кальян"; "на продукты" -> "продукт".
+Ещё особый случай — управление списком людей. Если пользователь просит добавить или удалить человека ("добавь человека Дима", "добавь Диму в список", "удали Машу из списка", "у Маши синоним Мария", "покажи людей"), верни:
+{"type":"people","action":"add"|"remove"|"alias"|"list","name":имя|null,"aliases":[синонимы]|null}
+- "add": добавить человека; "alias": добавить синонимы существующему; "remove": удалить; "list": показать список.
+- Имя приводи к именительному падежу с заглавной буквы.`;
 
 function normalizePerson(name) {
   if (!name || typeof name !== "string") return DEFAULT_PERSON;
@@ -118,8 +168,11 @@ function normalizePerson(name) {
   return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
 }
 
-async function parseMessage(text) {
+async function parseMessage(text, people) {
   const today = new Date().toISOString().slice(0, 10);
+  const peopleDesc = people
+    .map((p) => (p.aliases && p.aliases.length ? `${p.name} (синонимы: ${p.aliases.join(", ")})` : p.name))
+    .join("; ");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -130,7 +183,7 @@ async function parseMessage(text) {
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
-      system: PARSER_SYSTEM.split("{TODAY}").join(today),
+      system: PARSER_SYSTEM.split("{TODAY}").join(today).split("{PEOPLE}").join(peopleDesc || "Я"),
       messages: [{ role: "user", content: text }],
     }),
   });
@@ -140,17 +193,25 @@ async function parseMessage(text) {
   const clean = raw.replace(/```json|```/g, "").trim();
   const items = JSON.parse(clean);
   if (!Array.isArray(items)) return [];
+  const toPerson = (name, fallback) => {
+    const m = matchPerson(name, people);
+    return m || fallback;
+  };
   return items
     .filter(
       (i) =>
         i &&
         (i.type === "reassign"
           ? !!i.person
-          : i.type === "query"
+          : i.type === "query" || i.type === "people"
           ? true
           : (i.type === "expense" || i.type === "income") && Number(i.amount) > 0)
     )
-    .map((i) => (i.type === "query" ? { ...i, person: i.person ? normalizePerson(i.person) : null } : { ...i, person: normalizePerson(i.person) }));
+    .map((i) => {
+      if (i.type === "people") return i;
+      if (i.type === "query") return { ...i, person: i.person ? toPerson(i.person, null) : null };
+      return { ...i, person: toPerson(i.person, DEFAULT_PERSON) };
+    });
 }
 
 // ---------- Голосовые: распознавание через Groq Whisper ----------
@@ -238,9 +299,15 @@ async function handleMessage(msg) {
         `• <i>продукты 2500 и такси 600</i>\n` +
         `• <i>+80000 зарплата</i>\n` +
         `• <i>Маша купила продукты 2000</i> — трата на конкретного человека\n\n` +
-        `Команды:\n/report — итоги месяца\n/undo — удалить последнюю запись\n/dashboard — ссылка на дешборд\n\n` +
+        `Команды:\n/report — итоги месяца\n/people — кто может тратить\n/undo — удалить последнюю запись\n/dashboard — ссылка на дешборд\n\n` +
         `Твой id: <code>${userId}</code>`
     );
+  }
+
+  if (text === "/people") {
+    const people = await loadPeople();
+    const lines = people.map((p) => `• ${p.name}${p.aliases && p.aliases.length ? ` (${p.aliases.join(", ")})` : ""}`);
+    return send(chatId, `<b>Люди</b>\n${lines.join("\n")}\n\nДобавить: «добавь человека Дима»\nСинонимы: «у Димы синоним Димон»\nУдалить: «удали Диму из списка»`);
   }
 
   if (text === "/dashboard") {
@@ -278,9 +345,10 @@ async function handleMessage(msg) {
   }
 
   // Обычное сообщение — парсим
+  const knownPeople = await loadPeople();
   let items;
   try {
-    items = await parseMessage(text);
+    items = await parseMessage(text, knownPeople);
   } catch (e) {
     console.error("parse error:", e.message);
     return send(chatId, "Не получилось разобрать сообщение, попробуй ещё раз чуть проще, например: «кофе 300».");
@@ -289,12 +357,50 @@ async function handleMessage(msg) {
     return send(chatId, "Не нашёл здесь сумм. Напиши, например: «обед 700» или «+5000 фриланс».");
   }
 
+  // Управление списком людей
+  const peopleOps = items.filter((i) => i.type === "people");
+  items = items.filter((i) => i.type !== "people");
+  if (peopleOps.length) {
+    const out = [];
+    for (const op of peopleOps) {
+      const nm = (op.name || "").trim();
+      const cap = nm ? nm.charAt(0).toUpperCase() + nm.slice(1).toLowerCase() : "";
+      const als = (op.aliases || []).map((a) => String(a).toLowerCase().trim()).filter(Boolean);
+      if (op.action === "list" || (!cap && op.action !== "list")) {
+        const people = await loadPeople();
+        out.push("<b>Люди</b>\n" + people.map((p) => `• ${p.name}${p.aliases && p.aliases.length ? ` (${p.aliases.join(", ")})` : ""}`).join("\n"));
+      } else if (op.action === "add") {
+        await pool.query(
+          `INSERT INTO people (name, aliases) VALUES ($1, $2)
+           ON CONFLICT (name) DO UPDATE SET aliases = (SELECT ARRAY(SELECT DISTINCT unnest(people.aliases || EXCLUDED.aliases)))`,
+          [cap, als]
+        );
+        out.push(`👤 Добавил: ${cap}${als.length ? ` (${als.join(", ")})` : ""}`);
+      } else if (op.action === "alias") {
+        const { rowCount } = await pool.query(
+          `UPDATE people SET aliases = (SELECT ARRAY(SELECT DISTINCT unnest(aliases || $2::text[]))) WHERE name = $1`,
+          [cap, als]
+        );
+        out.push(rowCount ? `👤 ${cap}: синонимы добавлены (${als.join(", ")})` : `Не нашёл человека «${cap}». Список: /people`);
+      } else if (op.action === "remove") {
+        if (cap === DEFAULT_PERSON) {
+          out.push(`«${DEFAULT_PERSON}» удалить нельзя.`);
+        } else {
+          const { rowCount } = await pool.query(`DELETE FROM people WHERE name = $1`, [cap]);
+          out.push(rowCount ? `👤 Удалил: ${cap}. Его записи остались в базе.` : `Не нашёл человека «${cap}».`);
+        }
+      }
+    }
+    if (!items.length) return send(chatId, out.join("\n\n"));
+    var peopleLines = out;
+  }
+
   // Переназначение существующих записей
   const reassigns = items.filter((i) => i.type === "reassign");
   items = items.filter((i) => i.type !== "reassign");
   const reassignLines = [];
   for (const r of reassigns) {
-    const q = (r.query || "").trim() || null;
+    const q = (r.query || "").trim() ? stemRu(r.query) : null;
     const { rows } = await pool.query(
       `UPDATE transactions SET person=$1
        WHERE occurred_on = COALESCE($2::date, CURRENT_DATE)
@@ -309,6 +415,10 @@ async function handleMessage(msg) {
       reassignLines.push(`↪️ На ${r.person}: ${rows.length} зап. на ${fmt(sum)} (${rows.map((x) => x.category).join(", ")})`);
     }
   }
+  if (typeof peopleLines !== "undefined" && peopleLines.length) {
+    reassignLines.unshift(...peopleLines);
+    peopleLines = [];
+  }
   if (reassigns.length && !items.length) {
     return send(chatId, reassignLines.join("\n"));
   }
@@ -320,7 +430,8 @@ async function handleMessage(msg) {
     const answers = [];
     for (const qq of queries) {
       const kind = qq.kind === "income" ? "income" : "expense";
-      const q = (qq.q || "").trim() || null;
+      const qRaw = (qq.q || "").trim() || null;
+      const q = qRaw ? stemRu(qRaw) : null;
       const from = qq.from || null, to = qq.to || null;
       const { rows } = await pool.query(
         `SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS n FROM transactions
@@ -333,7 +444,7 @@ async function handleMessage(msg) {
       );
       const r = rows[0];
       const who = qq.person ? qq.person : "все";
-      const what = q ? ` на «${q}»` : "";
+      const what = qRaw ? ` на «${qRaw}»` : "";
       const period = from ? (from === to ? ` за ${from}` : ` c ${from} по ${to || "сегодня"}`) : " за этот месяц";
       const verb = kind === "income" ? "заработано" : "потрачено";
       if (Number(r.n) === 0) {
@@ -353,7 +464,6 @@ async function handleMessage(msg) {
         }
       }
     }
-    if (!items.length && !reassigns.length) return send(chatId, answers.join("\n"));
     reassignLines.push(...answers);
   }
   if (!items.length && reassignLines.length) {
@@ -399,6 +509,39 @@ app.get("/dashboard", checkKey, (req, res) =>
   res.sendFile(path.join(__dirname, "public", "index.html"))
 );
 
+// Постраничный журнал + фильтр по категории
+app.get("/api/tx", checkKey, async (req, res) => {
+  try {
+    const month = /^\d{4}-\d{2}$/.test(req.query.month || "")
+      ? req.query.month + "-01"
+      : new Date().toISOString().slice(0, 8) + "01";
+    const person = (req.query.person || "").trim();
+    const pf = person && person !== "все" ? person : null;
+    const cat = (req.query.category || "").trim() || null;
+    const offset = Math.max(0, parseInt(req.query.offset || "0", 10) || 0);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "20", 10) || 20));
+    const { rows } = await pool.query(
+      `SELECT id, type, amount, category, description, COALESCE(person,'—') AS person, occurred_on::text AS day,
+              COUNT(*) OVER() AS total_count
+       FROM transactions
+       WHERE date_trunc('month', occurred_on) = date_trunc('month', $1::date)
+         AND ($2::text IS NULL OR person = $2)
+         AND ($3::text IS NULL OR category = $3)
+       ORDER BY occurred_on DESC, created_at DESC
+       OFFSET $4 LIMIT $5`,
+      [month, pf, cat, offset, limit]
+    );
+    res.json({
+      rows: rows.map((r) => ({ id: r.id, type: r.type, amount: Number(r.amount), category: r.category, description: r.description, person: r.person, day: r.day })),
+      total: rows.length ? Number(rows[0].total_count) : 0,
+      offset, limit,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
+});
+
 app.get("/api/summary", checkKey, async (req, res) => {
   try {
     const month = /^\d{4}-\d{2}$/.test(req.query.month || "")
@@ -408,7 +551,7 @@ app.get("/api/summary", checkKey, async (req, res) => {
     const person = (req.query.person || "").trim();
     const pf = person && person !== "все" ? person : null;
 
-    const [totals, byCat, byDay, recent, months, byMonth, byPerson, people] = await Promise.all([
+    const [totals, byCat, byDay, recent, months, byMonth, byPerson, people, regular, big] = await Promise.all([
       pool.query(
         `SELECT type, COALESCE(SUM(amount),0) AS total FROM transactions
          WHERE date_trunc('month', occurred_on) = date_trunc('month', $1::date)
@@ -464,6 +607,33 @@ app.get("/api/summary", checkKey, async (req, res) => {
         [month]
       ),
       pool.query(`SELECT DISTINCT person FROM transactions WHERE person IS NOT NULL ORDER BY person`),
+      // Регулярные траты: категория встречается в 4+ разных днях месяца
+      pool.query(
+        `SELECT category, COUNT(DISTINCT occurred_on) AS days, COUNT(*) AS n, SUM(amount) AS total
+         FROM transactions
+         WHERE type='expense' AND date_trunc('month', occurred_on) = date_trunc('month', $1::date)
+           AND ($2::text IS NULL OR person = $2)
+         GROUP BY category
+         HAVING COUNT(DISTINCT occurred_on) >= 4
+         ORDER BY days DESC, total DESC`,
+        [month, pf]
+      ),
+      // Крупные покупки: разовые траты заметно выше типичных (>= 3x медианы) или топ-5
+      pool.query(
+        `WITH m AS (
+           SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY amount) AS med
+           FROM transactions
+           WHERE type='expense' AND date_trunc('month', occurred_on) = date_trunc('month', $1::date)
+             AND ($2::text IS NULL OR person = $2)
+         )
+         SELECT t.id, t.amount, t.category, t.description, COALESCE(t.person,'—') AS person, t.occurred_on::text AS day
+         FROM transactions t, m
+         WHERE t.type='expense' AND date_trunc('month', t.occurred_on) = date_trunc('month', $1::date)
+           AND ($2::text IS NULL OR t.person = $2)
+           AND (m.med IS NULL OR t.amount >= m.med * 3)
+         ORDER BY t.amount DESC LIMIT 8`,
+        [month, pf]
+      ),
     ]);
 
     const t = { expense: 0, income: 0 };
@@ -479,6 +649,8 @@ app.get("/api/summary", checkKey, async (req, res) => {
       byMonth: byMonth.rows.map((r) => ({ month: r.m, expense: Number(r.expense || 0), income: Number(r.income || 0) })),
       byPerson: byPerson.rows.map((r) => ({ person: r.person, expense: Number(r.expense || 0), income: Number(r.income || 0) })),
       people: people.rows.map((r) => r.person),
+      regular: regular.rows.map((r) => ({ category: r.category, days: Number(r.days), n: Number(r.n), total: Number(r.total) })),
+      big: big.rows.map((r) => ({ ...r, amount: Number(r.amount) })),
       selectedPerson: pf || "",
     });
   } catch (e) {

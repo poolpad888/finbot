@@ -117,6 +117,14 @@
   .empty{color:var(--muted); text-align:center; padding:48px 16px}
   .err{color:var(--red); text-align:center; padding:40px 16px}
   footer{margin-top:48px; color:var(--muted); font-size:.85rem; text-align:center}
+.trk{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:10px 2px;border-bottom:1px solid rgba(239,230,207,.12)}
+.trk:last-child{border-bottom:none}
+.trk .tl{font-family:Oswald,sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:14px}
+.trk .tn{opacity:.55;font-size:12px;margin-left:8px}
+.trk .tv{font-family:"Chivo Mono",monospace;font-size:19px;white-space:nowrap}
+.trk .td{font-size:12px;margin-left:10px;white-space:nowrap}
+.trk .td.up{color:#D8453A}
+.trk .td.down{color:#7FA06A}
 .btn.more{display:block;margin:14px auto 0;padding:10px 26px}
 #cats .row{cursor:pointer}
 #cats .row:active{opacity:.8}
@@ -150,6 +158,11 @@
         </div>
       </div>
     </div>
+
+    <section id="trackedSec" hidden>
+      <h2>Под контролем</h2>
+      <div class="chartbox" id="tracked"></div>
+    </section>
 
     <section id="peopleSec">
       <h2>Кто тратил</h2>
@@ -300,6 +313,20 @@
       { name: "Расход", color: "#D8453A", values: dayExp },
       { name: "Доход",  color: "#B9A05C", values: dayInc }
     ], true);
+
+    var trk = (d.tracked || []).filter(function(x){ return x.cur > 0 || x.prev > 0; });
+    $("trackedSec").hidden = !trk.length;
+    if (trk.length){
+      $("tracked").innerHTML = trk.map(function(x){
+        var delta = "";
+        if (x.prev > 0){
+          var pct = Math.round((x.cur - x.prev) / x.prev * 100);
+          delta = '<span class="td ' + (pct > 0 ? "up" : "down") + '">' + (pct > 0 ? "▲ +" : "▼ ") + pct + '% к прошлому мес.</span>';
+        } else if (x.cur > 0) delta = '<span class="td">в прошлом мес. — 0</span>';
+        return '<div class="trk"><span class="tl">' + esc(x.label) + '<span class="tn">' + x.n + ' раз</span></span>' +
+          '<span><span class="tv">' + fmt(x.cur) + '</span>' + delta + '</span></div>';
+      }).join("");
+    }
 
     var bp = (d.byPerson || []).filter(function(p){ return p.expense > 0 || p.income > 0; });
     $("peopleSec").hidden = !(bp.length > 1 && !state.person);

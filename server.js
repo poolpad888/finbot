@@ -125,8 +125,8 @@ const send = (chatId, text) =>
   tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true });
 
 // ---------- Разбор сообщения через Claude ----------
-const EXPENSE_CATS = ["продукты","кафе и рестораны","транспорт","жильё","связь и интернет","здоровье","одежда","развлечения","подарки","путешествия","образование","прочее"];
-const INCOME_CATS = ["зарплата","фриланс","подарки","возврат","прочее"];
+const EXPENSE_CATS = ["продукты","кафе и рестораны","транспорт","жильё","связь и интернет","здоровье","одежда","развлечения","кальянная","ставки","подарки","путешествия","образование","прочее"];
+const INCOME_CATS = ["зарплата","фриланс","подарки","возврат","ставки","прочее"];
 
 const DEFAULT_PERSON = process.env.DEFAULT_PERSON || "Я";
 
@@ -137,6 +137,8 @@ const PARSER_SYSTEM = `Ты — парсер финансовых записей
 - Расходы по умолчанию. Доход — если явно сказано (+, "получил", "зарплата", "заработал" и т.п.).
 - Категории расходов строго из списка: ${EXPENSE_CATS.join(", ")}.
 - Категории доходов строго из списка: ${INCOME_CATS.join(", ")}.
+- Всё про кальяны (кальян, табак, уголь, чаша, кальянная) — категория "кальянная", НЕ "развлечения".
+- Всё про ставки (ставка, букмекер, пари, контора, купон, депозит на ставки) — категория "ставки". Выигрыш со ставок — это доход с категорией "ставки".
 - Если в сообщении несколько операций — верни несколько элементов.
 - Известные люди (используй ТОЛЬКО эти имена, точно как написано): {PEOPLE}. Любую форму, падеж или синоним приводи к имени из списка. Если названо имя не из списка — верни null, НИКОГДА не придумывай новых людей.
 - "person": имя из списка, если названо, чья это операция ("Маша купила продукты 2000" -> "Маша"). Если человек не назван или речь о себе ("я", "мне", "купил") — верни null.
@@ -636,6 +638,26 @@ app.get("/api/summary", checkKey, async (req, res) => {
       ),
     ]);
 
+    const TRACKED = [
+      { label: "Кальянная", pat: "кальян" },
+      { label: "Ставки", pat: "ставк" },
+    ];
+    const tracked = await Promise.all(TRACKED.map(async (tr) => {
+      const { rows } = await pool.query(
+        `SELECT
+           COALESCE(SUM(amount) FILTER (WHERE date_trunc('month', occurred_on) = date_trunc('month', $1::date)), 0) AS cur,
+           COUNT(*) FILTER (WHERE date_trunc('month', occurred_on) = date_trunc('month', $1::date)) AS n,
+           COALESCE(SUM(amount) FILTER (WHERE date_trunc('month', occurred_on) = date_trunc('month', $1::date) - interval '1 month'), 0) AS prev
+         FROM transactions
+         WHERE type='expense'
+           AND ($2::text IS NULL OR person = $2)
+           AND (category ILIKE '%' || $3 || '%' OR description ILIKE '%' || $3 || '%')`,
+        [month, pf, tr.pat]
+      );
+      const r = rows[0];
+      return { label: tr.label, cur: Number(r.cur), n: Number(r.n), prev: Number(r.prev) };
+    }));
+
     const t = { expense: 0, income: 0 };
     totals.rows.forEach((r) => (t[r.type] = Number(r.total)));
 
@@ -649,6 +671,7 @@ app.get("/api/summary", checkKey, async (req, res) => {
       byMonth: byMonth.rows.map((r) => ({ month: r.m, expense: Number(r.expense || 0), income: Number(r.income || 0) })),
       byPerson: byPerson.rows.map((r) => ({ person: r.person, expense: Number(r.expense || 0), income: Number(r.income || 0) })),
       people: people.rows.map((r) => r.person),
+      tracked: tracked,
       regular: regular.rows.map((r) => ({ category: r.category, days: Number(r.days), n: Number(r.n), total: Number(r.total) })),
       big: big.rows.map((r) => ({ ...r, amount: Number(r.amount) })),
       selectedPerson: pf || "",

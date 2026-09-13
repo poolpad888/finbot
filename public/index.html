@@ -117,6 +117,9 @@
   .empty{color:var(--muted); text-align:center; padding:48px 16px}
   .err{color:var(--red); text-align:center; padding:40px 16px}
   footer{margin-top:48px; color:var(--muted); font-size:.85rem; text-align:center}
+.gauge-stats{display:flex;justify-content:center;gap:26px;margin-top:10px;font-size:13px;opacity:.85;flex-wrap:wrap}
+.gauge-stats b{font-family:"Chivo Mono",monospace;font-weight:500}
+.gauge-stats .lbl{opacity:.6;letter-spacing:.04em;text-transform:uppercase;font-size:11px;margin-right:6px}
 .trk{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:10px 2px;border-bottom:1px solid rgba(239,230,207,.12)}
 .trk:last-child{border-bottom:none}
 .trk .tl{font-family:Oswald,sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:14px}
@@ -155,6 +158,8 @@
         <div class="splitlegend" style="width:100%; max-width:420px; margin-top:14px">
           <span class="in-t">доход <b id="incomeSum"></b></span>
           <span class="out-t">расход <b id="expenseSum"></b></span>
+        </div>
+        <div class="gauge-stats" id="heroStats">
         </div>
       </div>
     </div>
@@ -313,6 +318,21 @@
       { name: "Расход", color: "#D8453A", values: dayExp },
       { name: "Доход",  color: "#B9A05C", values: dayInc }
     ], true);
+
+    var now = new Date();
+    var curM = now.toISOString().slice(0, 7);
+    var elapsed = d.month === curM ? now.getDate() : dim;
+    var avg = elapsed ? d.totals.expense / elapsed : 0;
+    var stats = '<span><span class="lbl">Средний расход в день</span><b>' + fmt(avg) + '</b></span>';
+    if (d.month === curM && avg > 0){
+      var forecast = avg * dim;
+      stats += '<span><span class="lbl">Прогноз на месяц</span><b>≈ ' + fmt(forecast) + '</b></span>';
+      if (d.totals.income > 0){
+        var diff = d.totals.income - forecast;
+        stats += '<span><span class="lbl">' + (diff >= 0 ? 'Останется' : 'Перерасход') + '</span><b style="color:' + (diff >= 0 ? '#7FA06A' : '#D8453A') + '">' + fmt(Math.abs(diff)) + '</b></span>';
+      }
+    }
+    $("heroStats").innerHTML = stats;
 
     var trk = (d.tracked || []).filter(function(x){ return x.cur > 0 || x.prev > 0; });
     $("trackedSec").hidden = !trk.length;

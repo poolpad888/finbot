@@ -117,6 +117,16 @@
   .empty{color:var(--muted); text-align:center; padding:48px 16px}
   .err{color:var(--red); text-align:center; padding:40px 16px}
   footer{margin-top:48px; color:var(--muted); font-size:.85rem; text-align:center}
+.btn.more{display:block;margin:14px auto 0;padding:10px 26px}
+#cats .row{cursor:pointer}
+#cats .row:active{opacity:.8}
+.catlist{display:none;padding:4px 0 10px;border-bottom:1px solid rgba(239,230,207,.12)}
+.catlist.open{display:block}
+.catlist .mini{display:flex;justify-content:space-between;gap:10px;padding:5px 2px;font-size:13px}
+.catlist .mini .d{opacity:.55;font-variant-numeric:tabular-nums;margin-right:8px}
+.catlist .mini .ds{opacity:.8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.catlist .mini b{font-family:"Chivo Mono",monospace;font-weight:500;white-space:nowrap}
+.regdays{opacity:.6;font-size:12px;margin-left:8px}
 </style>
 </head>
 <body>
@@ -156,9 +166,20 @@
       <div class="chartbox" id="monthly"></div>
     </section>
 
+    <section id="regularSec" hidden>
+      <h2>Регулярные траты</h2>
+      <div class="chartbox bars" id="regular"></div>
+    </section>
+
+    <section id="bigSec" hidden>
+      <h2>Крупные покупки</h2>
+      <div class="journal" id="big"></div>
+    </section>
+
     <section>
       <h2>Журнал</h2>
       <div class="journal" id="journal"></div>
+      <button class="btn more" id="moreBtn" hidden>Далее</button>
     </section>
   </div>
 
@@ -173,7 +194,7 @@
 <script>
 (function(){
   var KEY = new URLSearchParams(location.search).get("key") || "";
-  var state = { month: "", person: "" };
+  var state = { month: "", person: "", jOffset: 0, jLastDay: "", jHtml: "", jPeople: [] };
   var MONTHS = ["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
   function fmt(n){ return Math.round(n).toLocaleString("ru-RU") + " ₽"; }
   function short(n){ return n >= 1000 ? Math.round(n/1000) + "к" : String(Math.round(n)); }
@@ -296,9 +317,57 @@
     if (!d.byCategory.length) cats.innerHTML = "<div class='empty'>Расходов в этом месяце нет</div>";
     else {
       var cmax = d.byCategory[0].total;
-      cats.innerHTML = d.byCategory.map(function(c){
-        return '<div class="row"><span class="name">' + esc(c.category) + '</span><span class="sum">' + fmt(c.total) + '</span>' +
-          '<span class="bar"><i style="width:' + Math.max(3, c.total / cmax * 100) + '%"></i></span></div>';
+      cats.innerHTML = d.byCategory.map(function(c, i){
+        return '<div class="row" data-cat="' + esc(c.category) + '"><span class="name">' + esc(c.category) + '</span><span class="sum">' + fmt(c.total) + '</span>' +
+          '<span class="bar"><i style="width:' + Math.max(3, c.total / cmax * 100) + '%"></i></span></div>' +
+          '<div class="catlist" data-cl="' + esc(c.category) + '"></div>';
+      }).join("");
+      Array.prototype.forEach.call(cats.querySelectorAll(".row[data-cat]"), function(row){
+        row.onclick = function(){
+          var cat = row.getAttribute("data-cat");
+          var box = cats.querySelector('.catlist[data-cl="' + cat.replace(/"/g, '\\"') + '"]');
+          if (box.classList.contains("open")){ box.classList.remove("open"); return; }
+          Array.prototype.forEach.call(cats.querySelectorAll(".catlist.open"), function(o){ o.classList.remove("open"); });
+          box.classList.add("open");
+          if (box.getAttribute("data-loaded")) return;
+          box.innerHTML = '<div class="mini">Загружаю…</div>';
+          fetch("/api/tx?key=" + encodeURIComponent(KEY) + "&month=" + state.month +
+                (state.person ? "&person=" + encodeURIComponent(state.person) : "") +
+                "&category=" + encodeURIComponent(cat) + "&limit=100")
+            .then(function(r){ return r.json(); })
+            .then(function(x){
+              box.setAttribute("data-loaded", "1");
+              box.innerHTML = x.rows.map(function(t){
+                return '<div class="mini"><span class="d">' + (+t.day.slice(8,10)) + '</span>' +
+                  '<span class="ds">' + esc(t.description || t.category) + (t.person !== "—" ? " · " + esc(t.person) : "") + '</span>' +
+                  '<b>' + fmt(t.amount) + '</b></div>';
+              }).join("") || '<div class="mini">Пусто</div>';
+            })
+            .catch(function(){ box.innerHTML = '<div class="mini">Ошибка загрузки</div>'; });
+        };
+      });
+    }
+
+    var reg = d.regular || [];
+    $("regularSec").hidden = !reg.length;
+    if (reg.length){
+      var rmax = Math.max.apply(null, reg.map(function(r){ return r.total; })) || 1;
+      $("regular").innerHTML = reg.map(function(r){
+        return '<div class="row"><span class="name">' + esc(r.category) + '<span class="regdays">' + r.days + ' дн · ' + r.n + ' раз</span></span>' +
+          '<span class="sum">' + fmt(r.total) + '</span>' +
+          '<span class="bar"><i style="width:' + Math.max(3, r.total / rmax * 100) + '%"></i></span></div>';
+      }).join("");
+    }
+
+    var big = d.big || [];
+    $("bigSec").hidden = !big.length;
+    if (big.length){
+      $("big").innerHTML = big.map(function(t){
+        var p = t.day.split("-");
+        return '<div class="tx"><div class="what"><div class="cat">' + esc(t.category) +
+          (t.person !== "—" ? '<span class="who">' + esc(t.person) + '</span>' : '') + '</div>' +
+          '<div class="desc">' + (+p[2]) + ' ' + monthName(p[0] + "-" + p[1]).split(" ")[0] + (t.description ? " · " + esc(t.description) : "") + '</div></div>' +
+          '<div class="amt expense">−' + fmt(t.amount) + '</div></div>';
       }).join("");
     }
 
@@ -307,32 +376,40 @@
       { name: "Расход", color: "#D8453A", values: d.byMonth.map(function(x){ return x.expense; }) }
     ], false);
 
-    var html = "", lastDay = "";
-    d.recent.forEach(function(t){
-      if (t.day !== lastDay){
-        lastDay = t.day;
-        var p = t.day.split("-");
-        html += '<div class="day">' + (+p[2]) + ' ' + monthName(p[0] + "-" + p[1]).split(" ")[0] + '</div>';
-      }
-      html += '<div class="tx" data-id="' + t.id + '"><div class="what"><div class="cat">' + esc(t.category) +
-        (t.person && people.length > 1 ? '<span class="who">' + esc(t.person) + '</span>' : '') + '</div>' +
-        (t.description ? '<div class="desc">' + esc(t.description) + '</div>' : '') + '</div>' +
-        '<div class="amt ' + t.type + '">' + (t.type === "income" ? "+" : "−") + fmt(t.amount) + '</div></div>' +
-        '<div class="edit" data-for="' + t.id + '">' +
-          '<div class="grid">' +
-            '<div><label>Сумма</label><input type="number" step="0.01" min="0" name="amount" value="' + t.amount + '"></div>' +
-            '<div><label>Тип</label><select name="type"><option value="expense"' + (t.type==="expense"?" selected":"") + '>расход</option><option value="income"' + (t.type==="income"?" selected":"") + '>доход</option></select></div>' +
-            '<div><label>Категория</label><input name="category" value="' + esc(t.category) + '"></div>' +
-            '<div><label>Кто</label><input name="person" value="' + esc(t.person === "—" ? "" : t.person) + '"></div>' +
-            '<div><label>Описание</label><input name="description" value="' + esc(t.description || "") + '"></div>' +
-            '<div><label>Дата</label><input type="date" name="day" value="' + t.day + '"></div>' +
-          '</div>' +
-          '<div class="acts"><button class="btn save">Сохранить</button><button class="btn del">Удалить</button></div>' +
-        '</div>';
-    });
-    var j = $("journal");
-    j.innerHTML = html || "<div class='empty'>Пусто</div>";
+    state.jPeople = people;
+    loadJournal(true);
+    $("moreBtn").onclick = function(){ loadJournal(false); };
+  }
 
+  var PAGE = 15;
+
+  function txHtml(t, people){
+    var html = "";
+    if (t.day !== state.jLastDay){
+      state.jLastDay = t.day;
+      var p = t.day.split("-");
+      html += '<div class="day">' + (+p[2]) + ' ' + monthName(p[0] + "-" + p[1]).split(" ")[0] + '</div>';
+    }
+    html += '<div class="tx" data-id="' + t.id + '"><div class="what"><div class="cat">' + esc(t.category) +
+      (t.person && people.length > 1 ? '<span class="who">' + esc(t.person) + '</span>' : '') + '</div>' +
+      (t.description ? '<div class="desc">' + esc(t.description) + '</div>' : '') + '</div>' +
+      '<div class="amt ' + t.type + '">' + (t.type === "income" ? "+" : "−") + fmt(t.amount) + '</div></div>' +
+      '<div class="edit" data-for="' + t.id + '">' +
+        '<div class="grid">' +
+          '<div><label>Сумма</label><input type="number" step="0.01" min="0" name="amount" value="' + t.amount + '"></div>' +
+          '<div><label>Тип</label><select name="type"><option value="expense"' + (t.type==="expense"?" selected":"") + '>расход</option><option value="income"' + (t.type==="income"?" selected":"") + '>доход</option></select></div>' +
+          '<div><label>Категория</label><input name="category" value="' + esc(t.category) + '"></div>' +
+          '<div><label>Кто</label><input name="person" value="' + esc(t.person === "—" ? "" : t.person) + '"></div>' +
+          '<div><label>Описание</label><input name="description" value="' + esc(t.description || "") + '"></div>' +
+          '<div><label>Дата</label><input type="date" name="day" value="' + t.day + '"></div>' +
+        '</div>' +
+        '<div class="acts"><button class="btn save">Сохранить</button><button class="btn del">Удалить</button></div>' +
+      '</div>';
+    return html;
+  }
+
+  function wireJournal(){
+    var j = $("journal");
     Array.prototype.forEach.call(j.querySelectorAll(".tx"), function(row){
       row.onclick = function(){
         var f = j.querySelector('.edit[data-for="' + row.getAttribute("data-id") + '"]');
@@ -354,7 +431,7 @@
             person: val("person").trim(), description: val("description").trim(), day: val("day")
           })
         }).then(function(r){ if (!r.ok) throw 0; load(); })
-          .catch(function(){ alert("Не удалось сохранить"); }).finally(function(){ });
+          .catch(function(){ alert("Не удалось сохранить"); });
       };
       f.querySelector(".del").onclick = function(){
         if (!confirm("Удалить запись?")) return;
@@ -364,6 +441,26 @@
           .catch(function(){ alert("Не удалось удалить"); });
       };
     });
+  }
+
+  function loadJournal(reset){
+    var j = $("journal");
+    if (reset){ state.jOffset = 0; state.jLastDay = ""; state.jHtml = ""; }
+    var btn = $("moreBtn");
+    btn.disabled = true;
+    fetch("/api/tx?key=" + encodeURIComponent(KEY) + "&month=" + state.month +
+          (state.person ? "&person=" + encodeURIComponent(state.person) : "") +
+          "&offset=" + state.jOffset + "&limit=" + PAGE)
+      .then(function(r){ return r.json(); })
+      .then(function(x){
+        x.rows.forEach(function(t){ state.jHtml += txHtml(t, state.jPeople || []); });
+        j.innerHTML = state.jHtml || "<div class='empty'>Пусто</div>";
+        state.jOffset += x.rows.length;
+        btn.hidden = state.jOffset >= x.total;
+        btn.disabled = false;
+        wireJournal();
+      })
+      .catch(function(){ btn.disabled = false; });
   }
 
   load();

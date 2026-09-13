@@ -109,6 +109,21 @@ function stemRu(word) {
   return w;
 }
 
+// Группы синонимов тем: поиск по одному слову находит всю группу
+const TOPIC_SYN = [
+  ["ставк", "букмекер", "пари", "беттинг"],
+  ["кальян", "табак"],
+];
+function topicStems(raw) {
+  const st = stemRu(raw);
+  const out = new Set([st]);
+  for (const group of TOPIC_SYN) {
+    if (group.some((g) => st.startsWith(g) || g.startsWith(st))) group.forEach((g) => out.add(g));
+  }
+  return Array.from(out);
+}
+
+
 // ---------- Telegram ----------
 const TG_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
@@ -138,7 +153,7 @@ const PARSER_SYSTEM = `Ты — парсер финансовых записей
 - Категории расходов строго из списка: ${EXPENSE_CATS.join(", ")}.
 - Категории доходов строго из списка: ${INCOME_CATS.join(", ")}.
 - Всё про кальяны (кальян, табак, уголь, чаша, кальянная) — категория "кальянная", НЕ "развлечения".
-- Всё про ставки (ставка, букмекер, пари, контора, купон, депозит на ставки) — категория "ставки". Выигрыш со ставок — это доход с категорией "ставки".
+- Всё про ставки и букмекерку (ставка, букмекер, букмекерка, БК, пари, контора, купон, депозит на ставки) — это одно и то же, категория "ставки". Выигрыш со ставок — это доход с категорией "ставки".
 - Если в сообщении несколько операций — верни несколько элементов.
 - Известные люди (используй ТОЛЬКО эти имена, точно как написано): {PEOPLE}. Любую форму, падеж или синоним приводи к имени из списка. Если названо имя не из списка — верни null, НИКОГДА не придумывай новых людей.
 - "person": имя из списка, если названо, чья это операция ("Маша купила продукты 2000" -> "Маша"). Если человек не назван или речь о себе ("я", "мне", "купил") — верни null.
@@ -402,11 +417,13 @@ async function handleMessage(msg) {
   items = items.filter((i) => i.type !== "reassign");
   const reassignLines = [];
   for (const r of reassigns) {
-    const q = (r.query || "").trim() ? stemRu(r.query) : null;
+    const q = (r.query || "").trim() ? topicStems(r.query) : null;
     const { rows } = await pool.query(
       `UPDATE transactions SET person=$1
        WHERE occurred_on = COALESCE($2::date, CURRENT_DATE)
-         AND ($3::text IS NULL OR category ILIKE '%'||$3||'%' OR description ILIKE '%'||$3||'%')
+         AND ($3::text[] IS NULL OR EXISTS (
+           SELECT 1 FROM unnest($3::text[]) AS w
+           WHERE category ILIKE '%'||w||'%' OR description ILIKE '%'||w||'%'))
        RETURNING type, amount, category`,
       [r.person, r.date || null, q]
     );
@@ -433,13 +450,15 @@ async function handleMessage(msg) {
     for (const qq of queries) {
       const kind = qq.kind === "income" ? "income" : "expense";
       const qRaw = (qq.q || "").trim() || null;
-      const q = qRaw ? stemRu(qRaw) : null;
+      const q = qRaw ? topicStems(qRaw) : null;
       const from = qq.from || null, to = qq.to || null;
       const { rows } = await pool.query(
         `SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS n FROM transactions
          WHERE type=$1
            AND ($2::text IS NULL OR person = $2)
-           AND ($3::text IS NULL OR category ILIKE '%'||$3||'%' OR description ILIKE '%'||$3||'%')
+           AND ($3::text[] IS NULL OR EXISTS (
+             SELECT 1 FROM unnest($3::text[]) AS w
+             WHERE category ILIKE '%'||w||'%' OR description ILIKE '%'||w||'%'))
            AND occurred_on >= COALESCE($4::date, date_trunc('month', CURRENT_DATE))
            AND occurred_on <= COALESCE($5::date, CURRENT_DATE)`,
         [kind, qq.person, q, from, to]
@@ -639,8 +658,8 @@ app.get("/api/summary", checkKey, async (req, res) => {
     ]);
 
     const TRACKED = [
-      { label: "Кальянная", pat: "кальян" },
-      { label: "Ставки", pat: "ставк" },
+      { label: "Кальянная", pats: ["кальян", "табак"] },
+      { label: "Ставки", pats: ["ставк", "букмекер", "пари", "беттинг"] },
     ];
     const tracked = await Promise.all(TRACKED.map(async (tr) => {
       const { rows } = await pool.query(
@@ -651,8 +670,10 @@ app.get("/api/summary", checkKey, async (req, res) => {
          FROM transactions
          WHERE type='expense'
            AND ($2::text IS NULL OR person = $2)
-           AND (category ILIKE '%' || $3 || '%' OR description ILIKE '%' || $3 || '%')`,
-        [month, pf, tr.pat]
+           AND EXISTS (
+             SELECT 1 FROM unnest($3::text[]) AS w
+             WHERE category ILIKE '%'||w||'%' OR description ILIKE '%'||w||'%')`,
+        [month, pf, tr.pats]
       );
       const r = rows[0];
       return { label: tr.label, cur: Number(r.cur), n: Number(r.n), prev: Number(r.prev) };
